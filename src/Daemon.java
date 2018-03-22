@@ -28,6 +28,9 @@ public class Daemon {
     //membership list. key is ID, value is {heart beat counter, local time millis}
     static final TreeMap<String, long[]> membershipList = new TreeMap<>();
 
+    //SDFSServer
+    public static final SDFSServer sdfsServer = new SDFSServer();
+
     //use to write to log file
     private static PrintWriter fileOutput;
 
@@ -163,6 +166,9 @@ public class Daemon {
             } else {
                 System.out.println("you are the first introducer");
                 membershipList.put(ID, new long[]{0, System.currentTimeMillis()});
+                //SDFS added
+                SDFSServer.fileManager.fileLists.putIfAbsent(ID, new ArrayList<>());
+
                 writeLog("JOIN", ID);
             }
         } catch (IOException e) {
@@ -198,6 +204,11 @@ public class Daemon {
         System.out.println("Enter \"ID\" to show self's ID");
         System.out.println("Enter \"MEMBER\" to show the membership list");
         System.out.println("Enter \"NEIGHBOUR\" to show the neighbour list");
+        System.out.println("Enter \"put local-file-path SDFS-file-name\" to put or update file to SDFS");
+        System.out.println("Enter \"get SDFS-file-name local-file-path\" to get SDFS file to local path");
+        System.out.println("Enter \"delete SDFS-file-name\" to delete SDFS file");
+        System.out.println("Enter \"list cluster\" list all the SDFS file information");
+        System.out.println("Enter \"list local SDFS\" list all the SDFS file information at local machine");
     }
 
     /**
@@ -263,54 +274,95 @@ public class Daemon {
         try (BufferedReader bufferedReader = new BufferedReader(new InputStreamReader(System.in))) {
             String cmd;
             while ((cmd = bufferedReader.readLine()) != null) {
-                switch (cmd) {
-                    case "JOIN":
-                        if (membershipList.size() == 0) {
-                            System.out.println("join the group");
-                            joinGroup(isIntroducer);
-                            ExecutorService executorService = Executors.newFixedThreadPool(3 + (isIntroducer ? 1 : 0));
-                            if (isIntroducer) {
-                                executorService.execute(new IntroducerThread());
+                if (cmd.equals("JOIN")) {
+                    if (membershipList.size() == 0) {
+                        System.out.println("join the group");
+                        joinGroup(isIntroducer);
+                        ExecutorService executorService = Executors.newFixedThreadPool(3 + (isIntroducer ? 1 : 0));
+                        if (isIntroducer) {
+                            executorService.execute(new IntroducerThread());
+                        }
+                        executorService.execute(new HeartbeatThread(900));
+                        executorService.execute(new ListeningThread());
+                        executorService.execute(new MonitorThread());
+                    } else {
+                        System.out.println("already in the group");
+                    }
+
+                } else if (cmd.equals("LEAVE")) {
+                    System.out.println("leave the group");
+                    if (membershipList.size() != 0) {
+                        Protocol.sendGossip(ID, "LEAVE", membershipList.get(ID)[0],
+                                2, 2, new DatagramSocket());
+                        fileOutput.println(LocalDateTime.now().toString() + " \"LEAVE!!\" " + ID);
+                        fileOutput.close();
+                        System.exit(0);
+                    }
+
+                } else if (cmd.equals("ID")) {
+                    System.out.println("Node ID : " + ID);
+
+                } else if (cmd.equals("MEMBER")) {
+                    System.out.println("membership list :");
+                    System.out.println("=======================================");
+                    for (Map.Entry<String, long[]> entry : membershipList.entrySet()) {
+                        System.out.println("ID : " + entry.getKey() + "counter : "
+                                + entry.getValue()[0] + "local time : " + entry.getValue()[1]);
+                    }
+                    System.out.println("=======================================");
+
+                } else if (cmd.equals("NEIGHBOUR")) {
+                    System.out.println("neighbour list :");
+                    System.out.println("=======================================");
+                    for (String neighbour : neighbours) {
+                        System.out.println(neighbour);
+                    }
+                    System.out.println("=======================================");
+
+                } else if (cmd.startsWith("put ") && cmd.split(" ").length == 3) {
+                    String localFile = cmd.split(" ")[1];
+                    String filename = cmd.split(" ")[2];
+                    final boolean[] confirm = {true};
+                    if (SDFSServer.fileManager.needConfirmationPut(filename)) {
+                        System.out.print("Last update is within 1 min, are you sure to update? y/n: ");
+                        if (bufferedReader.readLine() != null) {
+                            String input = bufferedReader.readLine();
+                            if (!input.startsWith("y")) {
+                                System.out.println("Rejected by user.");
+                                confirm[0] = false;
+                            } else {
+                                confirm[0] = true;
                             }
-                            executorService.execute(new HeartbeatThread(900));
-                            executorService.execute(new ListeningThread());
-                            executorService.execute(new MonitorThread());
-                        } else {
-                            System.out.println("already in the group");
                         }
-                        break;
-                    case "LEAVE":
-                        System.out.println("leave the group");
-                        if (membershipList.size() != 0) {
-                            Protocol.sendGossip(ID, "LEAVE", membershipList.get(ID)[0],
-                                    2, 2, new DatagramSocket());
-                            fileOutput.println(LocalDateTime.now().toString() + " \"LEAVE!!\" " + ID);
-                            fileOutput.close();
-                            System.exit(0);
-                        }
-                        break;
-                    case "ID":
-                        System.out.println("Node ID : " + ID);
-                        break;
-                    case "MEMBER":
-                        System.out.println("membership list :");
-                        System.out.println("=======================================");
-                        for (Map.Entry<String, long[]> entry : membershipList.entrySet()) {
-                            System.out.println("ID : " + entry.getKey() + "counter : "
-                                    + entry.getValue()[0] + "local time : " + entry.getValue()[1]);
-                        }
-                        System.out.println("=======================================");
-                        break;
-                    case "NEIGHBOUR":
-                        System.out.println("neighbour list :");
-                        System.out.println("=======================================");
-                        for (String neighbour : neighbours) {
-                            System.out.println(neighbour);
-                        }
-                        System.out.println("=======================================");
-                        break;
-                    default:
-                        System.out.println("unsupported command");
+                        new Thread(() -> {
+                            try {
+                                Thread.sleep(30000);
+                                if (!confirm[0]){
+                                    System.out.println("\nAutomatically rejected after 30s");
+                                    confirm[0] = false;
+                                }
+                            } catch (InterruptedException e) {
+                                e.printStackTrace();
+                            }
+                        }).start();
+                    }
+                    if (confirm[0]){
+                        System.out.println("Putting " + localFile + " to " + filename);
+                        SDFSServer.fileManager.putFile(localFile, filename);
+                    }
+                } else if (cmd.startsWith("get ") && cmd.split(" ").length == 3) {
+                    String localFile = cmd.split(" ")[2];
+                    String filename = cmd.split(" ")[1];
+                    SDFSServer.fileManager.getFile(localFile, filename);
+                } else if (cmd.startsWith("delete ") && cmd.split(" ").length == 2) {
+                    String filename = cmd.split(" ")[1];
+                    SDFSServer.fileManager.deleteFile(filename);
+                } else if (cmd.equals("list cluster")) {
+                    System.out.println(SDFSServer.fileManager.getClusterDescription());
+                } else if (cmd.equals("list local SDFS")) {
+                    System.out.println(SDFSServer.fileManager.getSelfDescription());
+                } else {
+                    System.out.println("unsupported command");
                 }
                 displayPrompt();
             }

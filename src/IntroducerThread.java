@@ -1,8 +1,6 @@
 import java.io.IOException;
-import java.net.DatagramPacket;
-import java.net.DatagramSocket;
-import java.net.InetAddress;
-import java.net.SocketException;
+import java.net.*;
+import java.util.ArrayList;
 import java.util.Map;
 
 /**
@@ -34,6 +32,10 @@ public class IntroducerThread extends Thread {
                 String joinNodeID = new String(introducerReceivePacket.getData(), 0, introducerReceivePacket.getLength());
                 Daemon.membershipList.put(joinNodeID, new long[]{0, System.currentTimeMillis()});
 
+                //update file list
+                //SDFS added
+                SDFSServer.fileManager.fileLists.putIfAbsent(joinNodeID, new ArrayList<>());
+
                 //build the membership list into a string
                 //send the string to the join node
                 //message format
@@ -55,6 +57,15 @@ public class IntroducerThread extends Thread {
                 InetAddress joinNodeAddress = InetAddress.getByName(joinNodeID.split("#")[1]);
                 DatagramPacket introducerSendPacket = new DatagramPacket(sendData, sendData.length, joinNodeAddress, introducerReceivePacket.getPort());
                 introducerSocket.send(introducerSendPacket);
+
+                //send file list to the joining node
+                //SDFS added
+                String joinNodeIP = joinNodeID.split("#")[1];
+                FileOperationMessage response = SDFSServer.fileManager.sendFileOperationMessage(joinNodeIP,
+                        new FileOperationMessage("init", SDFSServer.fileManager.fileLists));
+                if (response == null || !response.getAction().equals("ok")) {
+                    System.out.println("init file list at " + joinNodeID + " failed");
+                }
 
                 //update neighbours
                 Daemon.updateNeighbours();

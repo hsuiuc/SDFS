@@ -3,10 +3,7 @@ import java.net.Socket;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.security.NoSuchAlgorithmException;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.TreeMap;
+import java.util.*;
 
 /**file operations
  * Created by haosun on 11/25/17.
@@ -116,6 +113,89 @@ public class FileManager {
             }
         }
         return result;
+    }
+
+    public void updateFileList(TreeMap<String, long[]> membershipList) {
+        //if a node leave the cluster (leave of crash)
+        //replicate its files to a new node
+        //ensure there are 3 replications of each file in the cluster all the time
+        boolean toReplicate = false;
+
+        //if a node exist in membership list, but not in file list
+        for (String ID : membershipList.keySet()) {
+            SDFSServer.fileManager.fileLists.putIfAbsent(ID, new ArrayList<>());
+        }
+
+        //if a node exits in file list, but not in membership list
+        //remove it from file list. replicate the files on it to a
+        //new node
+        ArrayList<String> removeList = new ArrayList<>();
+        for (String ID : SDFSServer.fileManager.fileLists.keySet()) {
+            if (membershipList.get(ID) == null) {
+                toReplicate = true;
+                removeList.add(ID);
+            }
+        }
+        for (String toRemoveID : removeList) {
+            fileLists.remove(toRemoveID);
+            System.out.println("remove " + toRemoveID + "from file list");
+        }
+
+        if (toReplicate) {
+            new Thread(() -> {
+                try {
+                    Thread.sleep(1500);
+                    replicateToNewNode();
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+            }).start();
+        }
+    }
+
+    public void replicateToNewNode() {
+        //find and store all distinct files in the SDFS
+        HashSet<String> fileNames = new HashSet<>();
+        for (String ID : fileLists.keySet()) {
+            for (SDFSFile file : fileLists.get(ID)) {
+                fileNames.add(file.getFileName());
+            }
+        }
+
+        for (String fileName : fileNames) {
+            ArrayList<String> fileLocations = listFileLocations(fileName);
+            if (fileLocations.size() < 3 && fileLocations.size() > 0) {
+                Collections.sort(fileLocations);
+                if (Daemon.ID.equals(fileLocations.get(0))) {
+                    int replicationNum = 3 - fileLocations.size();
+                    ArrayList<String> candidateHosts = new ArrayList<>();
+                    for (String ID : fileLists.keySet()) {
+                        if (!fileLocations.contains(ID)) {
+                            candidateHosts.add(ID);
+                        }
+                    }
+                    byte[] fileContent = readFile(fileName);
+                    SDFSFile fileToReplicate = null;
+                    for (SDFSFile tmpFile : fileLists.get(Daemon.ID)) {
+                        if (tmpFile.getFileName().equals(fileName)) {
+                            fileToReplicate = new SDFSFile(tmpFile, fileContent);
+                            break;
+                        }
+                    }
+                    if (fileToReplicate != null) {
+                        for (String locationID : randomPick(candidateHosts, replicationNum)) {
+                            String locationIP = locationID.split("#")[1];
+                            FileOperationMessage response = sendFileOperationMessage(locationIP, new FileOperationMessage("put", fileToReplicate));
+                            if (response == null || !response.getAction().equals("ok")) {
+                                System.out.println("replicate " + fileName + " at " + locationID + " failed");
+                            } else {
+                                System.out.println("replicate " + fileName + " at " + locationID + " succeeded");
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /**

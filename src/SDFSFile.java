@@ -37,9 +37,19 @@ public class SDFSFile implements Serializable{
         this.lastModificationTime = System.currentTimeMillis();
 
         MessageDigest md = MessageDigest.getInstance("SHA-256");
+        md.update(fileName.getBytes());
         md.update(this.file);
         byte[] digest = md.digest();
         this.SHA256 = String.format("%064x", new java.math.BigInteger(1, digest));
+    }
+
+    public SDFSFile(SDFSFile from, byte[] fileContent) {
+        this.fileName = from.getFileName();
+        this.timeStamp = from.getTimeStamp();
+        this.SHA256 = from.getSHA256();
+        this.fileSize = from.getFileSize();
+        this.lastModificationTime = from.getLastModificationTime();
+        this.file = fileContent;
     }
 
     /**

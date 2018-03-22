@@ -57,6 +57,9 @@ public class ListeningThread extends Thread {
                             Daemon.updateNeighbours();
                             Daemon.writeLog("GOSSIP ADD", ID);
                         }
+
+                        //SDFS added
+                        SDFSServer.fileManager.updateFileList(Daemon.membershipList);
                     }
                     break;
                 case "LEAVE":
@@ -64,6 +67,9 @@ public class ListeningThread extends Thread {
                         Daemon.membershipList.remove(ID);
                         Daemon.updateNeighbours();
                         Daemon.writeLog("GOSSIP LEAVE", ID);
+
+                        //SDFS added
+                        SDFSServer.fileManager.updateFileList(Daemon.membershipList);
                     }
                     break;
                 case "REMOVE":
@@ -71,6 +77,9 @@ public class ListeningThread extends Thread {
                         Daemon.membershipList.remove(ID);
                         Daemon.updateNeighbours();
                         Daemon.writeLog("GOSSIP REMOVE", ID);
+
+                        //SDFS added
+                        SDFSServer.fileManager.updateFileList(Daemon.membershipList);
                     }
                     break;
                 default:
